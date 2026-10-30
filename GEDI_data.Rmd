@@ -1,0 +1,132 @@
+---
+title: "GEDI_data"
+author: "Rachel Hallmark"
+date: "2026-10-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# install packages
+```{r}
+install.packages(c(
+  "tidyverse",
+  "sf",            # vector data (flight boxes, GEDI points, footprint buffers)
+  "terra",         # rasters (NEON CHM tiles, mosaicking, extraction)
+  "neonUtilities", # downloading NEON AOP data
+  "dplyr",         # filtering/summarizing tables
+  "ggplot2",       # plots
+  "lubridate",     # pulling year/month from GEDI dates (for leaf-on filtering)
+  "arrow",         # reading Parquet files (chewie caches GEDI this way)
+  "remotes"        # for installing chewie from GitHub
+))
+
+remotes::install_github("Permian-Global-Research/chewie", auth_token = NULL)
+
+
+```
+# load libraries 
+```{r}
+library(tidyverse)
+library(sf)
+library(terra)
+library(neonUtilities)
+library(chewie)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(arrow)
+```
+
+# Look at NEON AOP flight boxes 
+```{r}
+# read in all flight boxes from project directory 
+aop <- st_read("AOP_flightBoxes/AOP_flightboxesAllSites.shp")
+
+# view/explore
+aop
+names(aop)
+aop[[3]] # shows site names [[4]] for site ID
+st_crs(aop) # retrieve coordinate reference system 
+plot(st_geometry(aop))
+
+```
+
+# Pull out Harvard forest 
+```{r}
+harv <- aop[aop$siteID == "HARV",]
+
+# view 
+view(harv) # should only have rows for Harvard forest/watershed 
+
+# keep only priority 1 - priority differentiates how often the area gets flown over/has images taken 
+harv_p1 <- harv |> 
+  filter(priority == 1)
+
+# plot both 
+plot(st_geometry(harv), border = "grey")
+plot(st_geometry(harv_p1), border = "red", add = TRUE) # this is the AOP flight boundary we will use
+  
+```
+
+# Search for GEDI footprints in AOP flight boundary of interest 
+```{r}
+# search for gedi footprint over AOP boundary 
+
+# makes a list of granules with tracks that cross HARV box
+gedi_search <- find_gedi(
+  harv_p1, # sf raster for AOP boundary
+  gedi_product = "2A", # canopy height product
+  date_start = "2019-04-01", 
+  date_end   = "2025-12-31"
+)
+
+gedi_search # this gives 123 granules, each granule is an ISS orbit pass
+
+# check which version of gedi data we are using 
+gedi_search$url[1] #v2 
+```
+
+# download GEDI data - skip this chunk for lab
+You need NASA earthdata credentials (free to make), but we won't want to do that in lab. GEDI files also take a while to download so maybe we give pre-prepared GEDI data?
+```{r}
+# sign into NASA earth data
+chewie_creds()
+
+# test download a few granules 
+gedi_test <- grab_gedi(gedi_search[1:3, ]) # download and caches files
+gedi_test
+
+# make cache directory 
+cache_dir <- chewie_get_cache()
+cache_dir
+
+# check download size 
+files <- list.files(cache_dir, recursive = TRUE, full.names = TRUE)
+sum(file.size(files)) / 1e9  
+
+# files are pretty large so clip to just leaf-on months 
+gedi_leafon <- gedi_search[month(gedi_search$time_start) %in% 6:9, ]
+nrow(gedi_leafon)          # number of granules to download
+
+# download leaf on data 
+gedi_data <- grab_gedi(gedi_leafon)
+
+# clip data to HARV AOP boundary 
+harv_gedi <- collect_gedi(gedi_data, gedi_find = gedi_leafon)
+nrow(harv_gedi) # number of footprints over HARV
+names(harv_gedi) # available columns 
+
+# plot to confirm it worked 
+plot(st_geometry(harv_p1), border = "red")
+plot(st_geometry(harv_gedi), pch = ".", add = TRUE)
+
+# save 
+st_write(harv_gedi, "data/harv_gedi_leafon.gpkg")
+
+```
+
+
+
