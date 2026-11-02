@@ -1,0 +1,163 @@
+---
+title: "Rachel_NEON"
+author: "Rachel Hallmark"
+date: "2026-11-02"
+output: html_document
+---
+
+# Overview of workflow
+
+This lab uses a **2 km x 2 km subset** of Harvard Forest (HARV) so everything fits in the class repo:
+
+- `data/neon_chm_subset/harv_chm_YYYY.tif` — NEON canopy height model (CHM), 1 m resolution, one file per AOP flight year
+- `data/harv_gedi_subset.gpkg` — quality-filtered, leaf-on GEDI footprints that fall in the same 2 km block
+
+**Part A: NEON** — Read the CHM file for each AOP flight year and pull the year from the file name.
+
+**Part B: matching by location** — Transform the GEDI points to NEON's coordinate system (UTM 18N, meters), buffer each point into a 25 m circle, and extract the 98th percentile of NEON CHM pixels inside each circle for every AOP year. Each value is labeled with its GEDI `shot_number` and `aop_year` (`chm_results`).
+
+**Part C: joining and matching by time** — Join the GEDI table to `chm_results` by `shot_number`, keep rows where the GEDI year equals the AOP year, and drop non-forest footprints (NEON height < 2 m).
+
+**Part D: comparison** — Correlation, bias, and RMSE between GEDI RH98 and NEON `chm_p98`, plus a GEDI vs. NEON plot with a 1:1 line.
+
+# Load libraries
+
+```{r}
+library(sf)
+library(terra)
+library(tidyverse)
+library(exactextractr)
+```
+
+# Instructor prep (not run by students)
+
+Builds the class subset from the full NEON download and full GEDI file. Set to `eval = FALSE` so it doesn't run when knitting.
+
+```{r, eval = FALSE}
+# full NEON download (3 AOP years of 1 km tiles) - local only, not in repo
+chm_dir   <- "NEON_struct-ecosystem"
+tifs      <- list.files(chm_dir, pattern = "CHM\\.tif$", recursive = TRUE, full.names = TRUE)
+tif_year  <- sub(".*DP3\\.30015\\.001\\.(\\d{4})-\\d{2}.*", "\\1", tifs)
+aop_years <- sort(unique(tif_year))
+
+# full quality-filtered GEDI footprints over HARV
+harv_gedi_full <- st_read("data/lab_gedi_data.gpkg")
+
+# find the 2 km x 2 km block with the most GEDI shots
+xy <- harv_gedi_full |> st_transform(32618) |> st_coordinates()
+blocks <- data.frame(x0 = floor(xy[, 1] / 2000) * 2000,
+                     y0 = floor(xy[, 2] / 2000) * 2000) |>
+  count(x0, y0, sort = TRUE)
+head(blocks)
+best <- blocks[1, ]   # change to blocks[2, ] etc. if the top block is mostly water/clearing
+
+# crop each year's NEON map to the block and save
+crop_box <- ext(best$x0, best$x0 + 2000, best$y0, best$y0 + 2000)
+dir.create("data/neon_chm_subset", showWarnings = FALSE)
+for (yr in aop_years) {
+  chm_sub <- crop(vrt(tifs[tif_year == yr]), crop_box)
+  writeRaster(chm_sub, paste0("data/neon_chm_subset/harv_chm_", yr, ".tif"),
+              overwrite = TRUE, gdal = c("COMPRESS=DEFLATE"))
+}
+
+# save the GEDI shots inside the same block (back in lat/long)
+box_poly <- st_as_sfc(st_bbox(c(xmin = best$x0, ymin = best$y0,
+                                xmax = best$x0 + 2000, ymax = best$y0 + 2000),
+                              crs = st_crs(32618)))
+harv_gedi_full |>
+  st_transform(32618) |>
+  st_filter(box_poly) |>
+  st_transform(4326) |>
+  st_write("data/harv_gedi_subset.gpkg", delete_dsn = TRUE)
+```
+
+# Part A: Read in/explore NEON data
+
+```{r}
+chm_files <- list.files("data/neon_chm_subset", pattern = "\\.tif$", full.names = TRUE)
+aop_years <- sub(".*harv_chm_(\\d{4})\\.tif$", "\\1", chm_files)
+aop_years
+
+# look at one year
+chm_1 <- rast(chm_files[1])
+chm_1                         # resolution, extent, CRS
+crs(chm_1, describe = TRUE)   # should be UTM zone 18N
+plot(chm_1, main = paste("NEON CHM", aop_years[1]))
+```
+
+# Part B: Matching by location
+
+```{r}
+# read in GEDI footprints (lat/long)
+harv_gedi <- st_read("data/harv_gedi_subset.gpkg")
+anyDuplicated(harv_gedi$shot_number)   # should be 0
+
+# GEDI footprints as 25 m circles in NEON's coordinate system
+gedi_fp <- harv_gedi |>
+  st_transform(crs(chm_1)) |>   # transform GEDI to NEON's coordinate system (meters)
+  st_buffer(12.5)               # draw a 25 m circle around each GEDI point
+
+# see the footprints on top of the NEON map
+plot(chm_1)
+plot(st_geometry(gedi_fp), add = TRUE, border = "red")
+
+# match GEDI and NEON by location: for each AOP year, lay every GEDI circle on
+# that year's NEON map and summarize the pixels inside it as the 98th percentile
+chm_results <- map2(chm_files, aop_years, \(f, yr) {
+  data.frame(
+    shot_number = gedi_fp$shot_number,
+    aop_year    = as.integer(yr),
+    chm_p98     = exact_extract(rast(f), gedi_fp, fun = "quantile",
+                                quantiles = 0.98, progress = FALSE)
+  )
+}) |> bind_rows()
+
+chm_results <- filter(chm_results, !is.na(chm_p98))   # drop footprints with no NEON coverage
+count(chm_results, aop_year)
+```
+
+# Part C: Joining and matching by time
+
+```{r}
+gedi_tbl <- harv_gedi |>
+  st_drop_geometry() |>
+  mutate(gedi_year = year(date_time),
+         month     = month(date_time)) |>
+  select(shot_number, gedi_year, month, rh98, rh95, pft_class, solar_elevation)
+
+compare <- inner_join(gedi_tbl, chm_results, by = "shot_number")
+nrow(compare)
+
+# keep pairs where GEDI and NEON were measured in the same year
+compare_matched <- filter(compare, gedi_year == aop_year)
+count(compare_matched, aop_year, gedi_year)
+
+# drop non-forest footprints
+compare_forest <- filter(compare_matched, chm_p98 >= 2)
+
+# save (shot_number as text so the 17-digit IDs aren't rounded)
+compare_forest |>
+  mutate(shot_number = as.character(shot_number)) |>
+  write.csv("data/harv_gedi_neon_compare.csv", row.names = FALSE)
+```
+
+# Part D: Comparison
+
+```{r}
+compare_forest |>
+  group_by(aop_year) |>
+  summarise(
+    n    = n(),
+    r    = cor(rh98, chm_p98),
+    bias = mean(rh98 - chm_p98),              # + means GEDI reads taller than NEON
+    rmse = sqrt(mean((rh98 - chm_p98)^2))
+  )
+
+ggplot(compare_forest, aes(chm_p98, rh98)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  geom_smooth(method = "lm", color = "black", se = FALSE) +
+  facet_wrap(~ aop_year) +
+  coord_equal() +
+  labs(x = "NEON CHM 98th percentile (m)", y = "GEDI RH98 (m)")
+```

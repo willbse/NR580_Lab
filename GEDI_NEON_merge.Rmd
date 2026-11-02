@@ -58,6 +58,7 @@ table(tif_year)   # tiles per year
 ```
 
 # Part B - matching by location
+Need to have downloaded NEON data to do this 
 ```{r}
 # read in GEDI data 
 harv_gedi <- st_read("data/lab_gedi_data.gpkg")
@@ -98,6 +99,7 @@ count(chm_results, aop_year)
 
 # Part C - joining and matching by time
 ```{r}
+# read in 
 gedi_tbl <- harv_gedi_qc |>
   st_drop_geometry() |>
   mutate(gedi_year = year(date_time),
