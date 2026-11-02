@@ -1,5 +1,5 @@
 ---
-title: "Neon_API"
+title: "Neon_data"
 author: "WilliamSelvidge"
 date: "2026-10-28"
 output: html_document
@@ -8,3 +8,341 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+# Load Packages 
+
+```{r install packages }
+
+# install.packages(c(
+#   "tidyverse",
+#   "terra",
+#   "neonUtilities",
+#   "ragg",         
+#   "tidyterra", 
+#   "ggpubr",       
+#   "here"))
+
+```
+
+```{r package load }
+
+library(tidyverse)
+library(terra)
+library(neonUtilities)
+library(ragg)
+library(tidyterra)
+library(ggpubr)
+library(here)
+
+```
+
+# NEON 
+
+```{r }
+getwd()
+
+#-- Change this line --# 
+setwd("C:/Users/willb/OneDrive/Desktop/NR580_lab/NR580_code")
+#--                  --#
+
+neon_data_dir <- here("Data", "NEON_data")
+chm_dir <-  here("Data", "NEON_data", "chm_mosaics")
+gedi_data_dir <- here("Data", "GEDI_data")
+
+chm <-  tibble(path = list.files(neon_data_dir, pattern = "_CHM\\.tif$",               # Put CHM file names into a dataframe 
+                                 recursive = TRUE, full.names = TRUE)) %>% 
+  mutate(year = str_match(path, "\\.(20\\d{2})-\\d{2}\\.basic")[, 2] %>% 
+           as.integer(),
+         tile = str_match(basename(path), "_(\\d{6}_\\d{7})_CHM")[, 2])
+
+count(chm, year)
+
+```
+
+```{r load virtual data }
+
+years <- c(2019, 2022, 2024, 2025)                                 # Years we have data for at HARV
+mos_1m <- map(years, \(y) vrt(chm$path[chm$year == y])) %>%  set_names(years)  # map essentially creates a function, where the code looks at the years (defined above), \(y) is year code is currently in, then pulls the chm raster path given the year from chm above. vrt() creates a virtual raster without using memory. Finally the pipe makes the years the name so we can reference in the index below. 
+
+mos_1m[["2019"]]            # Index the years. Here you can check resolution, spatial extent, coordinate reference system
+
+```
+
+```{r clip rasters to smallest extent }
+
+# Check that all 1m rasters have same CRS and resolution (They do)
+map(mos_1m, crs)
+map(mos_1m, res)
+map(mos_1m, origin)
+# 
+
+ext_1m <- map(mos_1m, ext) 
+
+common_extent_1m <- ext(
+  max(map_dbl(ext_1m, xmin)),
+  min(map_dbl(ext_1m, xmax)),
+  max(map_dbl(ext_1m, ymin)),
+  min(map_dbl(ext_1m, ymax)))
+
+print(common_extent_1m)
+
+mos_1m_common <- map(mos_1m,
+                     \(r) crop(r, common_extent_1m, snap = "in"))
+
+map(mos_1m_common, ext)
+
+map(mos_1m_common, \(r) c(nrow = nrow(r), ncol = ncol(r)))
+
+walk(names(mos_1m_common), \(yr) {                     
+  writeRaster(
+    mos_1m_common[[yr]],
+    filename = file.path(chm_dir, paste0("CHM_1m_", yr, ".tif")),
+    overwrite = TRUE,
+    gdal = c(
+      "COMPRESS=DEFLATE",
+      "TILED=YES",
+      "BIGTIFF=IF_SAFER"))
+})
+
+```
+
+```{r create 25 m rasters from common extent rasters }
+
+res(mos_1m[["2019"]])                         # Check resolution (1m x 1m)
+
+aggregate_chm <- function(year) {
+  
+  chm <- rast(file.path(chm_dir, paste0("CHM_1m_", year, ".tif"))) 
+  
+  chm_25m <- aggregate(                       # Since it is 1m pixels, can use aggregate to combine 25 1m pixels, creating a 25m resolution 
+    chm,
+    fact = 25,
+    fun = mean,                               # Takes the mean of all pixels when aggregating 
+    na.rm = TRUE)
+  
+  writeRaster(
+    chm_25m,
+    filename = file.path(chm_dir, 
+    paste0("CHM_25m_", year, ".tif")),
+    overwrite = TRUE)
+  
+  return(chm_25m)
+  
+}     # Function to change resolution to match GEDI 
+
+chm_25m <- map(years, aggregate_chm) %>%  # Run function 
+  set_names(years)
+
+
+```
+
+```{r Visualizing 25 m through years no data mask }
+
+chm_2019_25m <- rast(file.path(chm_dir, "CHM_25m_2019.tif"))
+chm_2022_25m <- rast(file.path(chm_dir, "CHM_25m_2022.tif"))
+chm_2024_25m <- rast(file.path(chm_dir, "CHM_25m_2024.tif"))
+chm_2025_25m <- rast(file.path(chm_dir, "CHM_25m_2025.tif"))
+
+plot(chm_2019_25m,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2019 (25 m)")
+
+plot(chm_2022_25m,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2022 (25 m)")
+
+plot(chm_2024_25m,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2024 (25 m)")
+
+plot(chm_2025_25m,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2025 (25 m)")
+
+chm_diff_25m <- chm_2025_25m - chm_2019_25m
+
+global(chm_diff_25m, c("mean", "sd"), na.rm = TRUE)
+
+global(chm_diff_25m, c("min", "max"), na.rm = TRUE)
+
+global(chm_diff_25m, quantile, probs = c(0.05, 0.95), na.rm = TRUE)
+
+hist(chm_diff_25m, breaks = 100, xlim = c(-30, 30),
+     main = "CHM change, 2025 minus 2019", xlab = "Height change (m)")
+
+plot(chm_diff_25m,
+  col = hcl.colors(50, "Red-Green", rev = FALSE),
+  range = c(-5, 5),
+  colNA = "black",
+  main = "HARV Canopy Height, CHM diff (25 m)")
+
+# View multiple plots at once
+par(mfrow = c(1, 3))
+
+plot(chm_2019_25m, col = hcl.colors(40, "Greens", rev = TRUE),
+     range = c(0, 30), colNA = "grey85", main = "2019")
+plot(chm_2025_25m, col = hcl.colors(40, "Greens", rev = TRUE),
+     range = c(0, 30), colNA = "grey85", main = "2025")
+plot(chm_diff_25m, col = hcl.colors(50, "Red-Green"),
+     range = c(-5, 5), colNA = "grey85", main = "Change (2025 - 2019)")
+
+par(mfrow = c(1, 1))   # reset afterward
+# 
+```
+
+Need to decide how to clip data. Each flight year has slightly different flightbox, so I tried to clip it to the same extent (this is chunk 6). The problem is the clip creates a boundary box and clips it based on coordinates, but there can be slightly different sampled data or areas with no data in the flight path (this is shown by running line 149) 
+
+Below is a code to aggregate and clip the raster based on available data and not coordinates. 
+
+```{r 25 m raster using data mask}
+
+# fraction of non-NA cells per year (on your common-extent 25 m rasters)
+map_dbl(chm_25m, \(r) global(!is.na(r), "mean")[[1]])
+
+# quick look at the NA footprint for each year
+par(mfrow = c(2, 2))
+walk(names(chm_25m), \(yr) plot(is.na(chm_25m[[yr]]), main = yr))
+
+aggregate_chm <- function(year) {
+  chm <- rast(file.path(chm_dir, paste0("CHM_1m_", year, ".tif")))
+
+  chm_25m <- aggregate(chm, fact = 25, fun = mean, na.rm = TRUE)
+  cover   <- aggregate(!is.na(chm), fact = 25, fun = "mean")  # fraction of valid 1 m pixels
+
+  list(chm = chm_25m, cover = cover)
+}
+
+agg <- map(years, aggregate_chm) %>% set_names(years)
+
+# cells that are fully covered in ALL years
+valid_all <- reduce(map(agg, \(a) a$cover == 1), `&`)
+
+chm_25m <- map(agg, \(a) mask(a$chm, valid_all, maskvalues = FALSE))
+
+# write out the masked versions
+walk(names(chm_25m), \(yr) {
+  writeRaster(chm_25m[[yr]],
+              file.path(chm_dir, paste0("CHM_25m_mask_", yr, ".tif")),
+              overwrite = TRUE)
+})
+
+```
+
+```{r Visualizing 25 m through years w/ data mask }
+
+chm_25m_mask_2019 <- rast(file.path(chm_dir, "CHM_25m_mask_2019.tif"))
+chm_25m_mask_2022 <- rast(file.path(chm_dir, "CHM_25m_mask_2022.tif"))
+chm_25m_mask_2024 <- rast(file.path(chm_dir, "CHM_25m_mask_2024.tif"))
+chm_25m_mask_2025 <- rast(file.path(chm_dir, "CHM_25m_mask_2025.tif"))
+
+plot(chm_25m_mask_2019,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2019 (25 m)")
+
+plot(chm_25m_mask_2022,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2022 (25 m)")
+
+plot(chm_25m_mask_2024,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2024 (25 m)")
+
+plot(chm_25m_mask_2025,                              # Plot 
+  col = hcl.colors(40, "Greens", rev = TRUE),
+  range = c(0,30),
+  colNA = "black",
+  main = "HARV Canopy Height, 2025 (25 m)")
+
+chm_diff_25m_mask <- chm_25m_mask_2025 - chm_25m_mask_2019
+
+global(chm_diff_25m_mask, c("mean", "sd"), na.rm = TRUE)
+
+global(chm_diff_25m_mask, c("min", "max"), na.rm = TRUE)
+
+global(chm_diff_25m_mask, quantile, probs = c(0.05, 0.95), na.rm = TRUE)
+
+hist(chm_diff_25m_mask, breaks = 100, xlim = c(-30, 30),
+     main = "CHM change, 2025 minus 2019", xlab = "Height change (m)")
+
+plot(chm_diff_25m_mask,
+  col = hcl.colors(50, "Red-Green", rev = FALSE),
+  range = c(-5, 5),
+  colNA = "black",
+  main = "HARV Canopy Height, CHM diff (25 m)")
+
+# View multiple plots at once
+par(mfrow = c(1, 3))
+
+plot(chm_25m_mask_2019, col = hcl.colors(40, "Greens", rev = TRUE),
+     range = c(0, 30), colNA = "grey85", main = "2019")
+plot(chm_25m_mask_2025, col = hcl.colors(40, "Greens", rev = TRUE),
+     range = c(0, 30), colNA = "grey85", main = "2025")
+plot(chm_diff_25m_mask, col = hcl.colors(50, "Red-Green"),
+     range = c(-5, 5), colNA = "grey85", main = "Masked Change (2025 - 2019)")
+
+par(mfrow = c(1, 1))   # reset afterward
+# 
+```
+
+```{r Visualizing 1m through years}
+
+chm_2019 <- rast(file.path(chm_dir, "CHM_1m_2019.tif"))
+chm_2025 <- rast(file.path(chm_dir, "CHM_1m_2025.tif"))
+
+plot(chm_2019,
+  col = hcl.colors(50, "Greens", rev = TRUE),
+  range = c(0, 40),
+  colNA = "grey85",
+  main = "HARV Canopy Height, 2019 (1 m)")
+
+plot(chm_2025,
+  col = hcl.colors(50, "Greens", rev = TRUE),
+  range = c(0, 40),
+  colNA = "grey85",
+  main = "HARV Canopy Height, 2025 (1 m)")
+
+chm_diff <- chm_2025 - chm_2019
+
+global(chm_diff, c("mean", "sd"), na.rm = TRUE)
+
+global(chm_diff, c("min", "max"), na.rm = TRUE)
+
+
+hist(chm_diff, breaks = 100, xlim = c(-30, 30),
+     main = "CHM change, 2025 minus 2019", xlab = "Height change (m)")
+
+plot(chm_diff,
+  col = hcl.colors(50, "Red-Green", rev = FALSE),
+  range = c(-10, 10),
+  colNA = "black",
+  main = "HARV Canopy Height, CHM diff (1 m)")
+
+```
+
+```{r matching GEDI and NEON crs }
+
+crs(chm_2019, describe = TRUE)
+map_chr(chm_25m, crs)
+map_chr(mos_1m, crs)
+
+```
+
+
+
+
+
+
