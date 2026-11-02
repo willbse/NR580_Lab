@@ -1,0 +1,124 @@
+---
+title: "Rachel_NEON"
+author: "Rachel Hallmark"
+date: "2026-11-02"
+output: html_document
+---
+# Overview of workflow 
+Part A: NEON
+
+Download the CHM. Get Ecosystem Structure (DP3.30015.001) for HARV from the NEON data portal: 3 flight years of 1 km GeoTIFF tiles at 1 m resolution.
+List the tiles by year. Find all CHM.tif files (tifs) and pull the flight year from each folder name (tif_year).
+Mosaic each year. Stitch each year’s tiles into one continuous height map with vrt().
+
+Part B: matching by location
+
+Prepare the GEDI footprints. Transform harv_gedi_qc to NEON’s coordinate system (UTM 18N, meters) and buffer each point into a 25 m circle, giving gedi_fp.
+Extract NEON height at each footprint. For each AOP year, overlay the circles on that year’s map and take the 98th percentile of the NEON pixels inside each circle (exact_extract()). Each value is labeled with its GEDI shot_number and aop_year, giving chm_results (saved as neon_chm_at_gedi.csv).
+
+Part C: joining and matching by time
+
+Make the GEDI table. Drop geometry from harv_gedi_qc and add gedi_year and month, giving gedi_tbl (saved as gedi_qc_table.csv).
+Join. Combine gedi_tbl and chm_results by shot_number, giving compare, where each footprint appears once per AOP year.
+Match by year. Keep rows where gedi_year == aop_year, giving compare_matched.
+Drop non-forest. Keep footprints with NEON height of at least 2 m, giving compare_forest (saved as harv_gedi_neon_compare.csv).
+
+Part D: comparison
+
+Statistics: correlation, bias, and RMSE between GEDI RH98 and NEON chm_p98, by AOP year.
+Plots: GEDI vs. NEON scatter or density plot with a 1:1 line, by AOP year.
+
+
+# Load libraries
+```{r}
+library(neonUtilities)
+library(httr2)
+library(sf)
+library(tidyverse)
+library(terra)
+library(exactextractr)
+```
+
+
+# Part A: Read in/explore NEON data
+Pre-downloaded data onto local system because the API was not working. If running - use the "chm_dir" object to point to wherever your data lives
+```{r}
+chm_dir <- "NEON_struct-ecosystem"   # the folder containing these 3 NEON folders
+
+tifs <- list.files(chm_dir, pattern = "CHM\\.tif$", recursive = TRUE, full.names = TRUE)
+
+# pull the year out of each file's folder name (e.g. ".2019-08")
+tif_year <- sub(".*DP3\\.30015\\.001\\.(\\d{4})-\\d{2}.*", "\\1", tifs)
+aop_years <- sort(unique(tif_year))
+aop_years
+
+table(tif_year)   # tiles per year
+
+
+```
+
+# Part B - matching by location
+```{r}
+# read in GEDI data 
+harv_gedi <- st_read("data/lab_gedi_data.gpkg")
+
+# GEDI footprints as 25 m circles in NEON's coordinate system
+chm_test  <- vrt(tifs[tif_year == aop_years[1]]) # stitch each year's 1km tiles onto a virtual raster
+
+gedi_fp   <- harv_gedi|>
+  st_transform(crs(chm_test)) |> # transform gedi to same coordinate system as NEON
+  st_buffer(12.5) # draw a 25m circle around each GEDI point
+
+# test: extract CHM 98th percentile for the first AOP year
+vals <- extract(chm_test, vect(gedi_fp),
+                fun = \(v, ...) quantile(v, 0.98, na.rm = TRUE))
+summary(vals[, 2])
+
+## extract over all AOP years -----
+
+# match GEDI and NEON by location. Each GEDI circle is laid on top of NEON's map for that year and then the NEON pixels inside it were summarized into one height. This gives every GEDI footprint a NEON height 
+chm_results <- lapply(aop_years, \(yr) {
+  chm_yr <- vrt(tifs[tif_year == yr])
+  data.frame(
+    shot_number = gedi_fp$shot_number,
+    aop_year    = as.integer(yr),
+    chm_p98     = exact_extract(chm_yr, gedi_fp, fun = "quantile",
+                                quantiles = 0.98, progress = TRUE)
+  )
+}) |> bind_rows()
+
+chm_results <- filter(chm_results, !is.na(chm_p98))   # drop footprints with no NEON coverage
+
+chm_results |>
+  mutate(shot_number = as.character(shot_number)) |>
+  write.csv("data/neon_chm_at_gedi.csv", row.names = FALSE)
+
+count(chm_results, aop_year)
+```
+
+# Part C - joining and matching by time
+```{r}
+gedi_tbl <- harv_gedi_qc |>
+  st_drop_geometry() |>
+  mutate(gedi_year = year(date_time),
+         month     = month(date_time)) |>
+  select(shot_number, gedi_year, month, rh98, rh95, pft_class, solar_elevation)
+
+compare <- inner_join(gedi_tbl, chm_results, by = "shot_number")
+nrow(compare)
+
+anyDuplicated(harv_gedi$shot_number)   # should be 0
+
+# keep GEDI shots close in time to NEON flight 
+compare_matched <- compare |>
+  filter(gedi_year == aop_year)
+
+count(compare_matched, aop_year, gedi_year)
+
+# drop non-forest footprints 
+compare_forest <- filter(compare_matched, chm_p98 >= 2)
+
+# save 
+write.csv(compare_forest, "data/harv_gedi_neon_compare.csv", row.names = FALSE)
+```
+
