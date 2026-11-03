@@ -1,0 +1,277 @@
+---
+title: "NR580_Nov9_lab"
+author: "Rachel Hallmark and Will Selvidge"
+date: "2026-11-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The goal of this lab is to become familiar with processing canopy height products from *full name here* (GEDI) and National Ecological Observatory Network (NEON) to understand how and why these products may differ and how they can be used in ecological applications. Analysis will be done for a single year, 2022, at one NEON site, Harvard forest, in the Northeastern United States. *insert short description about Harvard forest vegetation, etc, here*
+
+# Setup
+
+## install packages
+
+```{r}
+install.packages(c(
+  "tidyverse",
+  "sf",            # vector data (flight boxes, GEDI points, footprint buffers)
+  "terra",         # rasters (NEON CHM tiles, mosaicking, extraction)
+  "neonUtilities", # downloading NEON AOP data
+  "dplyr",         # filtering/summarizing tables
+  "ggplot2",       # plots
+  "lubridate",     # pulling year/month from GEDI dates (for leaf-on filtering)
+  "arrow",         # reading Parquet files (chewie caches GEDI this way)
+  "remotes",        # for installing chewie from GitHub
+  "exactextractr", 
+  "maps", 
+  "mapview"
+))
+```
+
+## load libraries
+
+```{r}
+library(tidyverse)
+library(sf)
+library(terra)
+library(neonUtilities)
+library(chewie)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(arrow)
+library(exactextractr)
+library(maps)
+library(mapview)
+```
+
+# Part A: Get GEDI flyovers at Harvard forest
+
+## NEON AOP flight boxes
+
+NEON has pre made AOP flight boundaries for all sites. See more [here](https://www.neonscience.org/data-collection/flight-box-design).
+
+```{r}
+# read in all flight boxes from project directory 
+aop <- st_read("AOP_flightBoxes/AOP_flightboxesAllSites.shp")
+
+# view/explore
+aop
+names(aop)
+aop[[3]] # shows site names [[4]] for site ID
+st_crs(aop) # retrieve coordinate reference system 
+
+# plot 
+# US state outlines as an sf object
+states <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE))
+
+# flight boxes are tiny at national scale, so plot their centroids as points
+aop_pts <- aop |>
+  st_transform(5070) |>
+  st_make_valid() |>
+  st_centroid()
+
+ggplot() +
+  geom_sf(data = states, fill = "grey95", color = "grey60") +
+  geom_sf(data = aop_pts, color = "darkgreen", size = 1.5) +
+  coord_sf(crs = st_crs(5070)) +   # USA Contiguous Albers Equal Area
+  labs(title = "NEON AOP flight boxes") +
+  theme_minimal()
+
+```
+
+## Pull out Harvard Forest from NEON AOP's
+
+```{r}
+harv <- aop[aop$siteID == "HARV",]
+
+# view 
+view(harv) # should only have rows for Harvard forest/watershed 
+
+# keep only priority 1 - priority differentiates how often the area gets flown over/has images taken 
+harv_p1 <- harv |> 
+  filter(priority == 1)
+
+# plot both
+mapview(harv, col.regions = "grey",
+        map.types = c("Esri.WorldImagery", "OpenStreetMap", "CartoDB.Positron")) +
+  mapview(harv_p1, col.regions = "red") # red is the P1 boundary we use 
+```
+
+## Search for GEDI footprints in AOP flight boundary of interest
+
+```{r}
+# search for gedi footprint over AOP boundary 
+
+# makes a list of granules with tracks that cross HARV box
+gedi_search <- find_gedi(
+  harv_p1, # sf raster for AOP boundary
+  gedi_product = "2A", # canopy height product
+  date_start = "2022-01-01", 
+  date_end   = "2022-12-31"
+)
+
+gedi_search # this gives 24 granules, each granule is an ISS orbit pass
+
+# check which version of gedi data we are using 
+gedi_search$url[1] #v2 
+```
+
+## SKIP DURING LAB - download GEDI data
+
+To download GEDI data you need a NASA EarthData account (free to downloaded data). However, the download also takes a long time so we will skip this chunk for class and use the pre-processed data starting in the next step.
+
+```{r}
+# sign into NASA earth data
+chewie_creds()
+
+# test download a few granules 
+gedi_test <- grab_gedi(gedi_search[1:3, ]) # download and caches files
+gedi_test
+
+# make cache directory 
+cache_dir <- chewie_get_cache()
+cache_dir
+
+# check download size 
+files <- list.files(cache_dir, recursive = TRUE, full.names = TRUE)
+sum(file.size(files)) / 1e9  
+
+# files are pretty large so clip to just leaf-on months 
+gedi_leafon <- gedi_search[year(gedi_search$time_start) == 2022 &
+                           month(gedi_search$time_start) %in% 6:9, ]
+nrow(gedi_leafon)          # number of granules to download
+
+# download leaf on data 
+gedi_data <- grab_gedi(gedi_leafon)
+
+# clip data to HARV AOP boundary 
+harv_gedi <- collect_gedi(gedi_data, gedi_find = gedi_leafon)
+nrow(harv_gedi) # number of footprints over HARV
+names(harv_gedi) # available columns 
+
+# plot to confirm it worked 
+plot(st_geometry(harv_p1), border = "red")
+plot(st_geometry(harv_gedi), pch = ".", add = TRUE)
+
+# save 
+st_write(harv_gedi, "data/harv_gedi_leafon_2.gpkg")
+
+# clip to a smaller version (to be compatible with github)
+names(harv_gedi) # look at what columns to keep
+harv_gedi_small <- harv_gedi |>
+  select(
+    # IDs and timing
+    shot_number, beam, date_time,
+    # quality filters
+    quality_flag, degrade_flag, sensitivity, solar_elevation,
+    surface_flag, leaf_off_flag, num_detectedmodes,
+    # heights
+    rh50, rh75, rh95, rh98, rh100,
+    # context for explaining GEDI vs NEON differences
+    elev_lowestmode, digital_elevation_model,
+    landsat_treecover, pft_class
+  )
+
+ncol(harv_gedi_small)   # should be ~20 (plus geometry)
+
+# save
+st_write(harv_gedi_small, "data/final_lab_gedi_data.gpkg")
+```
+
+## RESTART HERE - filter GEDI data
+
+```{r}
+# read in clipped gedi data 
+harv_gedi <- st_read("data/final_lab_gedi_data.gpkg")
+
+# filtering process
+step0 <- harv_gedi
+step1 <- step0 |> filter(quality_flag == 1) # GEDI's overall quality flag - removes clouds
+step2 <- step1 |> filter(degrade_flag == 0) # no instrument/pointing problems
+step3 <- step2 |> filter(sensitivity >= 0.95) # beam could see through the canopy to the ground
+step4 <- step3 |> filter(leaf_off_flag == 0)           # leaf-on conditions
+
+# see how many shots remain after each filtering step
+data.frame(
+  step = c("all shots", "quality_flag", "degrade_flag", "sensitivity", "leaf-on"),
+  n    = c(nrow(step0), nrow(step1), nrow(step2), nrow(step3), nrow(step4))
+) # should be left with ~1300 shots at step 5
+
+# rewrite data frame with new quality control 
+harv_gedi_qc <- step4
+
+# map 
+removed <- step0[!step0$shot_number %in% harv_gedi_qc$shot_number, ]
+
+mapview(harv_p1, col.regions = "red", alpha.regions = 0.1,
+        map.types = c("Esri.WorldImagery", "OpenStreetMap")) +
+  mapview(removed, col.regions = "grey", cex = 1.5, lwd = 0, layer.name = "Removed shots") +
+  mapview(harv_gedi_qc, zcol = "rh98", cex = 2, lwd = 0, layer.name = "Kept shots (RH98, m)")
+```
+
+# Part B - Explore NEON data
+
+## SKIP FOR LAB - Figure out which years have AOPs from NEON.
+
+Data is too large to be downloaded during class (also need a free NEON account). Look [here](https://data.neonscience.org/data-products/DP3.30015.001) to learn more about downloading NEON ecosystem structure data.
+
+```{r}
+chm_dir <- "NEON_struct-ecosystem"
+
+tifs <- list.files(chm_dir, pattern = "CHM\\.tif$", recursive = TRUE, full.names = TRUE)
+tif_year <- sub(".*DP3\\.30015\\.001\\.(\\d{4})-\\d{2}.*", "\\1", tifs)
+table(tif_year)
+
+tifs_2019 <- tifs[tif_year == "2019"]   # keep only 2019 tiles
+
+```
+
+## SKIP FOR LAB - Match NEON with GEDI data by location 
+```{r}
+# read in GEDI data 
+harv_gedi <- st_read("data/final_lab_gedi_data.gpkg")
+
+# stitch the 2019 tiles into one virtual raster
+chm_2019 <- vrt(tifs_2019)
+
+# transform GEDI data to the right format to be matched with NEON
+gedi_fp   <- harv_gedi|>
+  st_transform(crs(chm_test)) |> # transform gedi to same coordinate system as NEON
+  st_buffer(12.5) # draw a 25m circle around each GEDI point
+
+# NEON 98th percentile height inside each footprint (RH98 proxy)
+chm_results <- data.frame(
+  shot_number = as.character(gedi_fp$shot_number),
+  # for each GEDI footprint- finds NEON pixels inside it takes the 98th percentile of height
+  chm_p98     = exact_extract(chm_2019, gedi_fp, fun = "quantile",
+                              quantiles = 0.98, progress = TRUE)
+) |>
+  filter(!is.na(chm_p98))   # drop footprints with no NEON coverage
+
+# save 
+write.csv(chm_results, "data/neon_chm_at_gedi_2019.csv", row.names = FALSE)
+nrow(chm_results)
+```
+
+## RESTART HERE - join files by shot number 
+```{r}
+harv_gedi   <- st_read("data/final_lab_gedi_data.gpkg")
+chm_results <- read.csv("data/neon_chm_at_gedi_2019.csv",
+                        colClasses = c(shot_number = "character"))
+
+gedi_neon <- harv_gedi |>
+  mutate(shot_number = as.character(shot_number)) |>
+  inner_join(chm_results, by = "shot_number") |> 
+  rename(GEDI_rh98 = rh98, NEON_rh98 = chm_p98) |>
+  relocate(shot_number, GEDI_rh98, NEON_rh98)
+
+nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
+
+st_write(gedi_neon, "data/gedi_neon_2019.gpkg", delete_dsn = TRUE)
+```
+
