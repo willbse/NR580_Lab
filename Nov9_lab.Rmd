@@ -226,43 +226,53 @@ tifs <- list.files(chm_dir, pattern = "CHM\\.tif$", recursive = TRUE, full.names
 tif_year <- sub(".*DP3\\.30015\\.001\\.(\\d{4})-\\d{2}.*", "\\1", tifs)
 table(tif_year)
 
-tifs_2019 <- tifs[tif_year == "2019"]   # keep only 2019 tiles
+tifs_2022 <- tifs[tif_year == "2022"]   # keep only 2022 tiles
 
 ```
 
 ## SKIP FOR LAB - Match NEON with GEDI data by location
 
 ```{r}
-# read in GEDI data 
+# read in GEDI data and keep 2019 shots to match the NEON flight year
 harv_gedi <- st_read("lab_data/lab_gedi_qc.gpkg")
 
+
 # stitch the 2019 tiles into one virtual raster
-chm_2019 <- vrt(tifs_2019)
+chm_2022 <- vrt(tifs_2022)
 
 # transform GEDI data to the right format to be matched with NEON
-gedi_fp   <- harv_gedi|>
-  st_transform(crs(chm_test)) |> # transform gedi to same coordinate system as NEON
-  st_buffer(12.5) # draw a 25m circle around each GEDI point
+gedi_fp <- harv_gedi |>
+  st_transform(crs(chm_2022)) |> # same coordinate system as NEON
+  st_buffer(12.5)                # 25 m circle around each GEDI point
 
 # NEON 98th percentile height inside each footprint (RH98 proxy)
 chm_results <- data.frame(
   shot_number = as.character(gedi_fp$shot_number),
-  # for each GEDI footprint- finds NEON pixels inside it takes the 98th percentile of height
-  chm_p98     = exact_extract(chm_2019, gedi_fp, fun = "quantile",
+  # for each GEDI footprint, find the NEON pixels inside it and take the 98th percentile of height
+  chm_p98     = exact_extract(chm_2022, gedi_fp, fun = "quantile",
                               quantiles = 0.98, progress = TRUE)
 ) |>
   filter(!is.na(chm_p98))   # drop footprints with no NEON coverage
 
-# save 
-write.csv(chm_results, "lab_data/neon_chm_at_gedi_2019.csv", row.names = FALSE)
+# save
+write.csv(chm_results, "lab_data/neon_chm_at_gedi_2022.csv", row.names = FALSE)
 nrow(chm_results)
+
+# prep for single-footprint histogram
+fp_id <- chm_results$shot_number[1]
+fp1   <- gedi_fp[as.character(gedi_fp$shot_number) == fp_id, ]
+
+px <- exact_extract(chm_2022, fp1)[[1]]
+px <- px[px$coverage_fraction > 0.5, ]
+px$shot_number <- fp_id
+write.csv(px, "lab_data/one_footprint_pixels.csv", row.names = FALSE)
 ```
 
 ## RESTART HERE - join files by shot number
 
 ```{r}
 harv_gedi   <- st_read("lab_data/lab_gedi_qc.gpkg")
-chm_results <- read.csv("lab_data/neon_chm_at_gedi_2019.csv",
+chm_results <- read.csv("lab_data/neon_chm_at_gedi_2022.csv",
                         colClasses = c(shot_number = "character"))
 
 gedi_neon <- harv_gedi |>
@@ -273,5 +283,7 @@ gedi_neon <- harv_gedi |>
 
 nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 
-st_write(gedi_neon, "lab_data/gedi_neon_2019.gpkg", delete_dsn = TRUE) # final dataset
+st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final dataset
 ```
+
+# Part C - Plots and Analysis
