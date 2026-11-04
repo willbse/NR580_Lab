@@ -5,10 +5,6 @@ date: "2026-11-03"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 The goal of this lab is to become familiar with processing canopy height products from *full name here* (GEDI) and National Ecological Observatory Network (NEON) to understand how and why these products may differ and how they can be used in ecological applications. Analysis will be done for a single year, 2022, at one NEON site, Harvard forest, in the Northeastern United States. *insert short description about Harvard forest vegetation, etc, here*
 
 # Setup
@@ -180,14 +176,14 @@ harv_gedi_small <- harv_gedi |>
 ncol(harv_gedi_small)   # should be ~20 (plus geometry)
 
 # save
-st_write(harv_gedi_small, "data/final_lab_gedi_data.gpkg")
+st_write(harv_gedi_small, "lab_data/gedi_data.gpkg")
 ```
 
 ## RESTART HERE - filter GEDI data
 
 ```{r}
 # read in clipped gedi data 
-harv_gedi <- st_read("data/final_lab_gedi_data.gpkg")
+harv_gedi <- st_read("lab_data/gedi_data.gpkg")
 
 # filtering process
 step0 <- harv_gedi
@@ -204,6 +200,9 @@ data.frame(
 
 # rewrite data frame with new quality control 
 harv_gedi_qc <- step4
+
+# save cleaned data 
+ st_write(harv_gedi_qc, "lab_data/lab_gedi_qc.gpkg", delete_dsn = TRUE)
 
 # map 
 removed <- step0[!step0$shot_number %in% harv_gedi_qc$shot_number, ]
@@ -231,10 +230,11 @@ tifs_2019 <- tifs[tif_year == "2019"]   # keep only 2019 tiles
 
 ```
 
-## SKIP FOR LAB - Match NEON with GEDI data by location 
+## SKIP FOR LAB - Match NEON with GEDI data by location
+
 ```{r}
 # read in GEDI data 
-harv_gedi <- st_read("data/final_lab_gedi_data.gpkg")
+harv_gedi <- st_read("lab_data/lab_gedi_qc.gpkg")
 
 # stitch the 2019 tiles into one virtual raster
 chm_2019 <- vrt(tifs_2019)
@@ -254,14 +254,15 @@ chm_results <- data.frame(
   filter(!is.na(chm_p98))   # drop footprints with no NEON coverage
 
 # save 
-write.csv(chm_results, "data/neon_chm_at_gedi_2019.csv", row.names = FALSE)
+write.csv(chm_results, "lab_data/neon_chm_at_gedi_2019.csv", row.names = FALSE)
 nrow(chm_results)
 ```
 
-## RESTART HERE - join files by shot number 
+## RESTART HERE - join files by shot number
+
 ```{r}
-harv_gedi   <- st_read("data/final_lab_gedi_data.gpkg")
-chm_results <- read.csv("data/neon_chm_at_gedi_2019.csv",
+harv_gedi   <- st_read("lab_data/lab_gedi_qc.gpkg")
+chm_results <- read.csv("lab_data/neon_chm_at_gedi_2019.csv",
                         colClasses = c(shot_number = "character"))
 
 gedi_neon <- harv_gedi |>
@@ -272,6 +273,5 @@ gedi_neon <- harv_gedi |>
 
 nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 
-st_write(gedi_neon, "data/gedi_neon_2019.gpkg", delete_dsn = TRUE)
+st_write(gedi_neon, "lab_data/gedi_neon_2019.gpkg", delete_dsn = TRUE) # final dataset
 ```
-
