@@ -1,0 +1,2 @@
+"","shot_number","GEDI_rh98","NEON_rh98","beam","date_time","quality_flag","degrade_flag","sensitivity","solar_elevation","surface_flag","leaf_off_flag","num_detectedmodes","rh50","rh75","rh95","rh100","elev_lowestmode","digital_elevation_model","landsat_treecover","pft_class","Site_id"
+"1","206270000300261533",22.5200004577637,28.2058706276262,0,2022-08-03 17:33:36.096001,1,0,0.968919515609741,4.96056795120239,1,0,10,15.0100002288818,18.4099998474121,21.5900001525879,23.6800003051758,163.734008789062,182.637908935547,100,4,"A"

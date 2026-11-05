@@ -11,6 +11,7 @@ The goal of this lab is to become familiar with processing canopy height product
 
 ## install packages
 
+Install Packages 
 ```{r}
 install.packages(c(
   "tidyverse",
@@ -25,9 +26,31 @@ install.packages(c(
   "exactextractr", 
   "maps", 
   "mapview",
-  "ggpubr"))
+  "ggpubr",
+  "patchwork"))
 
 ```
+
+Load Library
+```{r}
+
+library(tidyverse)
+library(sf)
+library(terra)
+library(neonUtilities)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(arrow)
+library(remotes)
+library(exactextractr)
+library(maps)
+library(mapview)
+library(ggpubr)
+library(patchwork)
+
+```
+
 
 # Part A: Get GEDI flyovers at Harvard forest
 
@@ -62,6 +85,7 @@ ggplot() +
   labs(title = "NEON AOP flight boxes") +
   theme_minimal()
 
+
 ```
 
 ## Pull out Harvard Forest from NEON AOP's
@@ -84,23 +108,21 @@ mapview(harv, col.regions = "grey",
 
 ## Search for GEDI footprints in AOP flight boundary of interest
 
-***find_gedi package?***
-
 ```{r}
-# search for gedi footprint over AOP boundary 
-
-# makes a list of granules with tracks that cross HARV box
-gedi_search <- find_gedi(
-  harv_p1, # sf raster for AOP boundary
-  gedi_product = "2A", # canopy height product
-  date_start = "2022-01-01", 
-  date_end   = "2022-12-31"
-)
-
-gedi_search # this gives 24 granules, each granule is an ISS orbit pass
-
-# check which version of gedi data we are using 
-gedi_search$url[1] #v2 
+# # search for gedi footprint over AOP boundary 
+# 
+# # makes a list of granules with tracks that cross HARV box
+# gedi_search <- find_gedi(
+#   harv_p1, # sf raster for AOP boundary
+#   gedi_product = "2A", # canopy height product
+#   date_start = "2022-01-01", 
+#   date_end   = "2022-12-31"
+# )
+# 
+# gedi_search # this gives 24 granules, each granule is an ISS orbit pass
+# 
+# # check which version of gedi data we are using 
+# gedi_search$url[1] #v2 
 ```
 
 ## SKIP DURING LAB - download GEDI data
@@ -197,6 +219,7 @@ mapview(harv_p1, col.regions = "red", alpha.regions = 0.1,
         map.types = c("Esri.WorldImagery", "OpenStreetMap")) +
   mapview(removed, col.regions = "grey", cex = 1.5, lwd = 0, layer.name = "Removed shots") +
   mapview(harv_gedi_qc, zcol = "rh98", cex = 2, lwd = 0, layer.name = "Kept shots (RH98, m)")
+
 ```
 
 # Part B - Explore NEON data
@@ -218,8 +241,6 @@ tifs_2022 <- tifs[tif_year == "2022"]   # keep only 2022 tiles                  
 
 ## SKIP FOR LAB - Match NEON with GEDI data by location
 
-***Call out crs in code (just have crs(gedi/neon data ))***
-
 ```{r}
 # read in GEDI data and keep 2019 shots to match the NEON flight year
 harv_gedi <- st_read("lab_data/lab_gedi_qc.gpkg")
@@ -228,7 +249,7 @@ harv_gedi <- st_read("lab_data/lab_gedi_qc.gpkg")
 chm_2022 <- vrt(tifs_2022)
 #
 crs(chm_2022)                          # crs "ESPG 32618"
-crs(harv_p1)                               # crs "EPSG 4326"
+crs(harv_p1)                           # crs "EPSG 4326"
 
 # Not the same coordinate system
 
@@ -237,41 +258,40 @@ gedi_fp <- harv_gedi |>
   st_transform(crs(chm_2022)) |> # transform to same coordinate system as NEON
   st_buffer(12.5)                # 25 m circle around each GEDI point
 
-# NEON 98th percentile height inside each footprint (RH98 proxy)
-chm_results <- data.frame(
-  shot_number = as.character(gedi_fp$shot_number),
-  # for each GEDI footprint, find the NEON pixels inside it and take the 98th percentile of height
-  chm_p98     = exact_extract(chm_2022, gedi_fp, fun = "quantile",
-                              quantiles = 0.98, progress = TRUE)
-) |>
-  filter(!is.na(chm_p98))   # drop footprints with no NEON coverage
-
-# save
-# write.csv(chm_results, "lab_data/neon_chm_at_gedi_2022.csv", row.names = FALSE)
-nrow(chm_results)
-
-# prep for single-footprint histogram
-fp_id <- chm_results$shot_number[1]
-fp1   <- gedi_fp[as.character(gedi_fp$shot_number) == fp_id, ]
-
-px <- exact_extract(chm_2022, fp1)[[1]]
-px <- px[px$coverage_fraction > 0.5, ]
-px$shot_number <- fp_id
-# write.csv(px, "lab_data/one_footprint_pixels.csv", row.names = FALSE)
-
-# need to have tif for later analysis loaded into data (not as vrt due to file size)
-# Clip area around gedi shots used to make file size smaller 
-aoi <- gedi_fp %>% 
-  filter(as.character(shot_number) %in% gedi_neon$shot_number) %>% 
-  st_union() %>% 
-  st_buffer(50) %>%                                                   # 50 m buffer
-  vect() 
-
-chm_small <- crop(chm_2022, aoi)
-
-writeRaster(chm_small, "lab_data/chm_2022_harv_subset.tif",
-            overwrite = TRUE,
-            gdal = c("COMPRESS=DEFLATE"))
+# # NEON 98th percentile height inside each footprint (RH98 proxy)
+# chm_results <- data.frame(
+#   shot_number = as.character(gedi_fp$shot_number),
+#   # for each GEDI footprint, find the NEON pixels inside it and take the 98th percentile of height
+#   chm_p98     = exact_extract(chm_2022, gedi_fp, fun = "quantile",
+#                               quantiles = 0.98, progress = TRUE)
+# ) |>
+#   filter(!is.na(chm_p98))   # drop footprints with no NEON coverage
+# 
+# # save
+# # write.csv(chm_results, "lab_data/neon_chm_at_gedi_2022.csv", row.names = FALSE)
+# nrow(chm_results)
+# 
+# # prep for single-footprint histogram
+# fp_id <- chm_results$shot_number[1]
+# fp1   <- gedi_fp[as.character(gedi_fp$shot_number) == fp_id, ]
+# 
+# px <- exact_extract(chm_2022, fp1)[[1]]
+# px <- px[px$coverage_fraction > 0.5, ]
+# px$shot_number <- fp_id
+# 
+# # need to have tif for later analysis loaded into data (not as vrt due to file size)
+# # Clip area around gedi shots used to make file size smaller 
+# aoi <- gedi_fp %>% 
+#   filter(as.character(shot_number) %in% gedi_neon$shot_number) %>% 
+#   st_union() %>% 
+#   st_buffer(50) %>%                                                   # 50 m buffer
+#   vect() 
+# 
+# chm_small <- crop(chm_2022, aoi)
+# 
+# writeRaster(chm_small, "lab_data/chm_2022_harv_subset.tif",
+#             overwrite = TRUE,
+#             gdal = c("COMPRESS=DEFLATE"))
 
 ```
 
@@ -285,22 +305,11 @@ harv_gedi   <- st_read("lab_data/lab_gedi_qc.gpkg")
 chm_results <- read.csv("lab_data/neon_chm_at_gedi_2022.csv",
                         colClasses = c(shot_number = "character"))
 
-chm_results <- chm_results %>% 
-  filter(aop_year == 2022)
-
 gedi_neon <- harv_gedi |>
   mutate(shot_number = as.character(shot_number)) |>
   inner_join(chm_results, by = "shot_number") |> 
   rename(GEDI_rh98 = rh98, NEON_rh98 = chm_p98) |>
-  relocate(shot_number, GEDI_rh98, NEON_rh98) %>% 
-  mutate(Site_id = case_when(
-    shot_number == "206270000300261533" ~ "A",
-    shot_number == "206270000300261534" ~ "B",
-    shot_number == "206270000300261535" ~ "C",
-    shot_number == "206270000300261537" ~ "D",
-    shot_number == "206270200300261923" ~ "E",
-    .default = NA_character_
-))
+  relocate(shot_number, GEDI_rh98, NEON_rh98)
 
 nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 
@@ -310,30 +319,33 @@ st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final d
 Re-run block below with final data, then add it to section of do not run
 
 ```{r}
-# Getting chm and gedi resolution comparison
-
-neon_chm_2022 <- rast("lab_data/chm_2022_harv_subset.tif")        # Load smaller neon chm tif (pre-clipped around boundary)
-
-shot_id <- "206270000300261533"                                   # Site A
-
-fp_a <- gedi_fp |> filter(as.character(shot_number) == shot_id)   # Selecting GEDI 25 m polygon 
-
-# every CHM pixel touching the footprint, with its coordinates and how much of it is inside the circle
-px_a <- exact_extract(neon_chm_2022, fp_a, include_xy = TRUE)[[1]]     # Find neon pixels that are in GEDI boundary 
-names(px_a)                                                       # the height column is named value 
-px_a <- rename(px_a, chm = value)                                 # rename value to chm
-
-nrow(px_a)                                                        # How many neon pixels are included 
-sum(px_a$coverage_fraction)                                       # effective area in pixels (should be ~491 m²)
- 
-gedi_row <- gedi_neon %>%                                         # Get GEDI values from merged df  
-  st_drop_geometry() %>%                                          # Drop geom 
-  filter(shot_number == shot_id)                                  # Only site A
-
-gedi_rh <- data.frame(                                            # Create df for histagram 
-  metric = c("rh50", "rh75", "rh95", "rh98", "rh100"),            # All metrics 
-  height = c(gedi_row$rh50, gedi_row$rh75, gedi_row$rh95,         # Metric Values
-             gedi_row$GEDI_rh98, gedi_row$rh100))
+# # Getting chm and gedi resolution comparison
+# 
+# neon_chm_2022 <- rast("lab_data/chm_2022_harv_subset.tif")        # Load smaller neon chm tif (pre-clipped around boundary)
+# 
+# shot_id <- "206270000300261533"                                   # Site A
+# 
+# fp_a <- gedi_fp |> filter(as.character(shot_number) == shot_id)   # Selecting GEDI 25 m polygon 
+# 
+# # every CHM pixel touching the footprint, with its coordinates and how much of it is inside the circle
+# gedi_fp_neon_px <- exact_extract(neon_chm_2022, fp_a, include_xy = TRUE)[[1]]     # Find neon pixels that are in GEDI boundary 
+# names(gedi_fp_neon_px)                                                       # the height column is named value 
+# gedi_fp_neon_px <- rename(gedi_fp_neon_px, chm = value)                                 # rename value to chm
+# 
+# nrow(gedi_fp_neon_px)                                                        # How many neon pixels are included 
+# sum(gedi_fp_neon_px$coverage_fraction)                                       # effective area in pixels (should be ~491 m²)
+#  
+# gedi_row <- gedi_neon %>%                                         # Get GEDI values from merged df  
+#   st_drop_geometry() %>%                                          # Drop geom 
+#   filter(shot_number == shot_id)                                  # Only site A
+# 
+# gedi_rh <- data.frame(                                            # Create df for histagram 
+#   metric = c("rh50", "rh75", "rh95", "rh98", "rh100"),            # All metrics 
+#   height = c(gedi_row$rh50, gedi_row$rh75, gedi_row$rh95,         # Metric Values
+#              gedi_row$GEDI_rh98, gedi_row$rh100))
+# 
+# write.csv(gedi_fp_neon_px, file = "lab_data/gedi_fp_neon_px.csv")
+# write.csv(gedi_row, file = "lab_data/gedi_fp_chm.csv")
 
 # GEDI histogram 
 p_gedi <- ggplot() +
@@ -458,7 +470,7 @@ p_map <- ggplot() +
 
 p_map | p_hists + plot_annotation(title = "Site A GEDI vs NEON")
 
-# if not working output image is saved in "lab_outputs" as gedi_shot_A_comparison.png
+# if not working output image is saved in "lab_outputs" as gedi_site_A_comparison.png
 
 ```
 
