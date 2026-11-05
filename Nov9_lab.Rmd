@@ -27,6 +27,19 @@ install.packages(c(
   "mapview",
   "ggpubr"))
 
+# load libraries 
+library("tidyverse")
+library(sf)
+library(terra)
+library(neonUtilities)
+library(arrow)
+library(remotes)
+library(exactextractr)
+library(maps)
+library(mapview)
+library(ggpubr)
+
+
 ```
 
 # Part A: Get GEDI flyovers at Harvard forest
@@ -82,9 +95,7 @@ mapview(harv, col.regions = "grey",
   mapview(harv_p1, col.regions = "red") # red is the P1 boundary we use 
 ```
 
-## Search for GEDI footprints in AOP flight boundary of interest
-
-***find_gedi package?***
+## SKIP FOR LAB - Search for GEDI footprints in AOP flight boundary of interest
 
 ```{r}
 # search for gedi footprint over AOP boundary 
@@ -275,37 +286,44 @@ writeRaster(chm_small, "lab_data/chm_2022_harv_subset.tif",
 
 ```
 
-
 ## RESTART HERE - join files by shot number
-
-***neon_chm_at_gedi_2022.csv has 2019, 2022, 2024*** added filter in code chunk 
 
 ```{r}
 harv_gedi   <- st_read("lab_data/lab_gedi_qc.gpkg")
 chm_results <- read.csv("lab_data/neon_chm_at_gedi_2022.csv",
                         colClasses = c(shot_number = "character"))
 
-chm_results <- chm_results %>% 
-  filter(aop_year == 2022)
-
 gedi_neon <- harv_gedi |>
   mutate(shot_number = as.character(shot_number)) |>
   inner_join(chm_results, by = "shot_number") |> 
   rename(GEDI_rh98 = rh98, NEON_rh98 = chm_p98) |>
-  relocate(shot_number, GEDI_rh98, NEON_rh98) %>% 
-  mutate(Site_id = case_when(
-    shot_number == "206270000300261533" ~ "A",
-    shot_number == "206270000300261534" ~ "B",
-    shot_number == "206270000300261535" ~ "C",
-    shot_number == "206270000300261537" ~ "D",
-    shot_number == "206270200300261923" ~ "E",
-    .default = NA_character_
-))
+  relocate(shot_number, GEDI_rh98, NEON_rh98) 
 
 nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 
 st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final dataset
 ```
+
+# Plots 
+## plot one footprint
+```{r}
+px <- read.csv("lab_data/one_footprint_pixels.csv",
+               colClasses = c(shot_number = "character"))
+fp <- gedi_neon[gedi_neon$shot_number == px$shot_number[1], ]
+nrow(fp)   # should be 1
+
+ggplot(px, aes(x = value)) +
+  geom_histogram(binwidth = 1, fill = "grey70") +
+  geom_vline(xintercept = fp$NEON_rh98, color = "darkgreen", linewidth = 1) +
+  geom_vline(xintercept = fp$GEDI_rh98, color = "purple", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = mean(px$value, na.rm = TRUE), color = "black", linetype = "dotted") +
+  labs(x = "NEON pixel height (m)", y = "Number of 1 m pixels",
+       title = "Heights inside one GEDI footprint",
+       subtitle = "green = NEON 98th pct, purple = GEDI RH98, dotted = NEON mean") +
+  theme_minimal()
+```
+
+
 
 Re-run block below with final data, then add it to section of do not run
 
