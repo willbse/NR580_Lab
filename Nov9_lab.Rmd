@@ -393,6 +393,9 @@ ggsave("lab_outputs/gedi_site_A_comparison.png",
 
 # Part C - Plots and Analysis
 
+<<<<<<< HEAD
+  
+=======
 First view the selected GEDI shots within the NEON AOP
 
 Then Plot GEDI vs NEON height (98) metrics against eachother, examine rmse and bias 
@@ -497,3 +500,4 @@ p_map | p_hists + plot_annotation(title = "Site A GEDI vs NEON")
 
 
 
+>>>>>>> a502b8c4f25c8bc4f6b67cb526189cfdcc69e51d
