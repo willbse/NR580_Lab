@@ -304,7 +304,21 @@ nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final dataset
 ```
 
-# Plots 
+# Plots
+## histograms of GEDI and NEON rh98 values 
+```{r}
+gedi_neon |>
+  st_drop_geometry() |>
+  pivot_longer(c(GEDI_rh98, NEON_rh98), names_to = "source", values_to = "height") |>
+  ggplot(aes(x = height, fill = source)) +
+  geom_histogram(binwidth = 1, alpha = 0.5, position = "identity") +
+  scale_fill_manual(values = c(GEDI_rh98 = "purple", NEON_rh98 = "darkgreen"),
+                    labels = c("GEDI RH98", "NEON 98th percentile")) +
+  labs(x = "Canopy height (m)", y = "Number of footprints", fill = NULL,
+       title = "Canopy height distribution, HARV 2022") +
+  theme_minimal()
+```
+
 ## plot one footprint
 ```{r}
 px <- read.csv("lab_data/one_footprint_pixels.csv",
@@ -323,6 +337,53 @@ ggplot(px, aes(x = value)) +
   theme_minimal()
 ```
 
+## 1:1 line 
+```{r}
+stats <- gedi_neon |>
+  st_drop_geometry() |>
+  summarise(
+    n    = n(),
+    r2   = cor(GEDI_rh98, NEON_rh98, use = "complete.obs")^2,
+    bias = mean(GEDI_rh98 - NEON_rh98, na.rm = TRUE),
+    rmse = sqrt(mean((GEDI_rh98 - NEON_rh98)^2, na.rm = TRUE))
+  )
+
+lab <- sprintf("n = %d\nR² = %.2f\nBias = %.1f m\nRMSE = %.1f m",
+               stats$n, stats$r2, stats$bias, stats$rmse)
+
+ggplot(gedi_neon, aes(x = NEON_rh98, y = GEDI_rh98)) +
+  geom_point(alpha = 0.3, size = 1) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  annotate("text", x = 2, y = Inf, label = lab, hjust = 0, vjust = 1.2) +
+  coord_equal() +
+  labs(x = "NEON 98th percentile (m)", y = "GEDI RH98 (m)",
+       title = "GEDI vs NEON canopy height, HARV 2022") +
+  theme_minimal()
+```
+
+## Distribution of differences 
+```{r}
+gedi_neon <- gedi_neon |> mutate(diff = GEDI_rh98 - NEON_rh98)
+
+ggplot(gedi_neon, aes(x = diff)) +
+  geom_histogram(binwidth = 1, fill = "grey60") +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "GEDI − NEON (m)", y = "Number of footprints") +
+  theme_minimal()
+```
+
+## Difference map
+
+```{r}
+lim <- ceiling(max(abs(gedi_neon$diff), na.rm = TRUE) / 5) * 5   # round up to nearest 5
+
+mapview(gedi_neon, zcol = "diff",
+        col.regions = colorRampPalette(c("blue", "white", "red")),
+        at = seq(-lim, lim, by = 5),
+        cex = 3, lwd = 0,
+        layer.name = "GEDI − NEON (m)",
+        map.types = c("Esri.WorldImagery", "OpenStreetMap"))
+```
 
 
 Re-run block below with final data, then add it to section of do not run
