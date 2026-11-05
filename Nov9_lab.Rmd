@@ -287,3 +287,5 @@ st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final d
 ```
 
 # Part C - Plots and Analysis
+
+  
