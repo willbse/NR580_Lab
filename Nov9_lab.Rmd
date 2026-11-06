@@ -13,21 +13,21 @@ The goal of this lab is to become familiar with processing canopy height product
 
 Install Packages 
 ```{r}
-# install.packages(c(
-#   "tidyverse",
-#   "sf",            # vector data (flight boxes, GEDI points, footprint buffers)
-#   "terra",         # rasters (NEON CHM tiles, mosaicking, extraction)
-#   "neonUtilities", # downloading NEON AOP data
-#   "dplyr",         # filtering/summarizing tables
-#   "ggplot2",       # plots
-#   "lubridate",     # pulling year/month from GEDI dates (for leaf-on filtering)
-#   "arrow",         # reading Parquet files (chewie caches GEDI this way)
-#   "remotes",        # for installing chewie from GitHub
-#   "exactextractr", 
-#   "maps", 
-#   "mapview",
-#   "ggpubr",
-#   "patchwork"))
+install.packages(c(
+  "tidyverse",
+  "sf",            # vector data (flight boxes, GEDI points, footprint buffers)
+  "terra",         # rasters (NEON CHM tiles, mosaicking, extraction)
+  "neonUtilities", # downloading NEON AOP data
+  "dplyr",         # filtering/summarizing tables
+  "ggplot2",       # plots
+  "lubridate",     # pulling year/month from GEDI dates (for leaf-on filtering)
+  "arrow",         # reading Parquet files (chewie caches GEDI this way)
+  "remotes",        # for installing chewie from GitHub
+  "exactextractr",
+  "maps",
+  "mapview",
+  "ggpubr",
+  "patchwork"))
 
 # load libraries 
 library("tidyverse")
@@ -387,174 +387,7 @@ mapview(gedi_neon, zcol = "diff",
         map.types = c("Esri.WorldImagery", "OpenStreetMap"))
 ```
 
-
-Re-run block below with final data, then add it to section of do not run
-
-```{r}
-# Getting chm and gedi resolution comparison
-# 
-# neon_chm_2022 <- rast("lab_data/chm_2022_harv_subset.tif")        # Load smaller neon chm tif (pre-clipped around boundary)
-# 
-# shot_id <- "206270000300261533"                                   # Site A
-# 
-# fp_a <- gedi_fp |> filter(as.character(shot_number) == shot_id)   # Selecting GEDI 25 m polygon
-# 
-# # every CHM pixel touching the footprint, with its coordinates and how much of it is inside the circle
-# gedi_fp_neon_px <- exact_extract(neon_chm_2022, fp_a, include_xy = TRUE)[[1]]     # Find neon pixels that are in GEDI boundary
-# names(gedi_fp_neon_px)                                                       # the height column is named value
-# gedi_fp_neon_px <- rename(gedi_fp_neon_px, chm = value)                                 # rename value to chm
-# 
-# nrow(gedi_fp_neon_px)                                                        # How many neon pixels are included
-# sum(gedi_fp_neon_px$coverage_fraction)                                       # effective area in pixels (should be ~491 m²)
-# 
-# gedi_row <- gedi_neon %>%                                         # Get GEDI values from merged df
-#   st_drop_geometry() %>%                                          # Drop geom
-#   filter(shot_number == shot_id)                                  # Only site A
-# 
-# gedi_rh <- data.frame(                                            # Create df for histagram
-#   metric = c("rh50", "rh75", "rh95", "rh98", "rh100"),            # All metrics
-#   height = c(gedi_row$rh50, gedi_row$rh75, gedi_row$rh95,         # Metric Values
-#              gedi_row$GEDI_rh98, gedi_row$rh100))
-# 
-# # write.csv(gedi_fp_neon_px, file = "lab_data/gedi_fp_neon_px.csv", row.names = F)
-# # write.csv(gedi_row, file = "lab_data/gedi_fp_chm.csv", row.names = F)
-# 
-# # GEDI histogram 
-# # p_gedi <- ggplot() +
-# #   geom_col(aes(x = gedi_row$GEDI_rh98, y = 1), width = 1, fill = "red", alpha = 0.8) +
-# #   coord_cartesian(xlim = c(0,30)) +
-# #   scale_y_continuous(breaks = 0:1, limits = c(0, 1.1)) +
-# #   labs(x = NULL, y = "GEDI shots (n)") +
-# #   theme_bw()
-# # 
-# # # Neon histogram
-# # p_neon <- ggplot(px_a, aes(chm, weight = coverage_fraction)) +   # Because neon pixels often are at GEDI boundary edge, use weight to give meaning to that value
-# #   geom_histogram(binwidth = 1, fill = "grey70", color = "white") +
-# #   geom_vline(xintercept = gedi_row$NEON_rh98, color = "darkgreen", linewidth = 1) +
-# #   coord_cartesian(xlim = c(0,30)) +
-# #   labs(x = "Height (m)", y = "NEON pixels (coverage-weighted)") +
-# #   theme_bw()
-# # 
-# # p_hists <- p_gedi / p_neon + plot_layout(heights = c(1, 3))
-# # 
-# neon_crop <- crop(neon_chm_2022, vect(st_buffer(fp_a, 1)))        # crop chm to the footprint plus a 1 m margin
-# names(neon_crop) <- "chm"                                    # Rename raster to chm
-# neon_raster_df <- as.data.frame(neon_crop, xy = TRUE)                  #
-# 
-# gedi_pt <- st_centroid(fp_a)
-# # 1. Footprint polygon + the one NEON value the plot needs
-# fp_a$NEON_rh98 <- gedi_row$NEON_rh98
-# st_write(fp_a, "lab_data/gedi_fp_chm.gpkg", delete_dsn = TRUE)
-# 
-# # 2. Cropped CHM pixels, with coverage_fraction attached (0 = outside footprint)
-# neon_px <- merge(neon_raster_df,
-#                  gedi_fp_neon_px[, c("x", "y", "coverage_fraction")],
-#                  by = c("x", "y"), all.x = TRUE)
-# neon_px$coverage_fraction[is.na(neon_px$coverage_fraction)] <- 0
-# 
-# sum(neon_px$coverage_fraction > 0)   # should be 544, matching gedi_fp_neon_px
-# write.csv(neon_px, "lab_data/neon_px.csv", row.names = FALSE)
-# # 
-# # st_write(neon_raster_df, "lab_data/neon_raster_df.gpkg", delete_dsn = TRUE) # final dataset
-# # st_write(gedi_pt, "lab_data/gedi_pt.gpkg", delete_dsn = TRUE)
-# # 
-# # p_map <- ggplot() +
-# #   geom_raster(data = neon_raster_df, aes(x, y, fill = chm)) +
-# #   geom_sf(data = fp_a, fill = NA, color = "red", linewidth = 1) +
-# #   geom_sf(data = gedi_pt, color = "red", size = 2) +
-# #   scale_fill_viridis_c(name = "CHM (m)", option = "viridis") +
-# #   coord_sf(crs = st_crs(fp_a)) +
-# #   labs(x = NULL, y = NULL) +
-# #   theme_bw()
-# # 
-# # p_map | p_hists + plot_annotation(title = paste("GEDI shot", shot_id))
-# # 
-# # final_plot <- (p_map | p_hists) + plot_annotation(title = "Site A GEDI vs NEON")
-# # 
-# # ggsave("lab_outputs/gedi_site_A_comparison.png",
-# #        plot = final_plot,
-# #        width = 10, height = 5, units = "in",
-# #        dpi = 300)
-
-```
-
-# Part C - Plots and Analysis
-
-First view the selected GEDI shots within the NEON AOP
-
-Then Plot GEDI vs NEON height (98) metrics against eachother, examine rmse and bias 
-
-Then look at difference between the two products at each site
-```{r}
-
-# Plot the matched locations 
-mapview(harv_p1, col.regions = "red", alpha.regions = 0.1,
-        map.types = c("Esri.WorldImagery", "OpenStreetMap")) +
-  mapview(gedi_neon, zcol = "GEDI_rh98", cex = 4, lwd = 0,
-          layer.name = "GEDI shots with NEON (RH98, m)")
-
-gedi_neon_nogeom <- st_drop_geometry(gedi_neon)
-
-ggplot(gedi_neon_nogeom, aes(x = GEDI_rh98, y = NEON_rh98)) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-  geom_point(size = 5, alpha = 0.5) +
-  stat_cor(aes(label = paste(after_stat(r.label), after_stat(rr.label), sep = "~`,`~")),
-           label.x.npc = "left", label.y.npc = "top") +
-  labs(x = "GEDI rh98 (m)", y = "NEON CHM rh98 (m)") +
-  theme_bw()
-
-rmse <- sqrt(mean((gedi_neon_nogeom$GEDI_rh98 - gedi_neon_nogeom$NEON_rh98)^2, na.rm = TRUE))
-bias <- mean(gedi_neon_nogeom$GEDI_rh98 - gedi_neon_nogeom$NEON_rh98, na.rm = TRUE)
-
-rmse
-bias
-
-```
-
-Comparing GEDI and NEON resolutions 
-
-GEDI products are 25 m resolution circles while NEON is 1m resolution given as a 1km tile. 
-
-GEDI has one value assigned to the circle while NEON has many more pixels each with their own value. Below is looking at the differences and visualizing why it may matter. 
-```{r}
-# 
-# neon_raster_df <- st_read("lab_data/neon_raster_df.gpkg")
-# gedi_pt <-  st_read("lab_data/gedi_pt.gpkg")
-# gedi_fp_neon_px <- read.csv("lab_data/gedi_fp_neon_px.csv")
-# gedi_fp_chm <- read.csv("lab_data/gedi_fp_chm.csv")
-# 
-# # GEDI histogram 
-# p_gedi <- ggplot() +
-#   geom_col(aes(x = gedi_fp_chm$GEDI_rh98, y = 1), width = 1, fill = "red", alpha = 0.8) +
-#   coord_cartesian(xlim = c(0,30)) +
-#   scale_y_continuous(breaks = 0:1, limits = c(0, 1.1)) +
-#   labs(x = NULL, y = "GEDI shots (n)") +
-#   theme_bw()
-# 
-# # Neon histogram
-# p_neon <- ggplot(gedi_fp_neon_px, aes(chm, weight = coverage_fraction)) +   # Because neon pixels often are at GEDI boundary edge, use weight to give meaning to that value
-#   geom_histogram(binwidth = 1, fill = "grey70", color = "white") +
-#   geom_vline(xintercept = gedi_fp_chm$NEON_rh98, color = "darkgreen", linewidth = 1) +
-#   coord_cartesian(xlim = c(0,30)) +
-#   labs(x = "Height (m)", y = "NEON pixels (coverage-weighted)") +
-#   theme_bw()
-# 
-# p_hists <- p_gedi / p_neon + plot_layout(heights = c(1, 3))
-# 
-# p_map <- ggplot() +
-#   geom_raster(data = neon_raster_df, aes(x, y, fill = chm)) +
-#   geom_sf(data = gedi_fp_neon_px, fill = NA, color = "red", linewidth = 1) +
-#   geom_sf(data = gedi_pt, color = "red", size = 2) +
-#   scale_fill_viridis_c(name = "CHM (m)", option = "viridis") +
-#   coord_sf(crs = st_crs(gedi_fp_neon_px)) +
-#   labs(x = NULL, y = NULL) +
-#   theme_bw()
-# 
-# p_map | p_hists + plot_annotation(title = "Site A GEDI vs NEON")
-# 
-# # if not working output image is saved in "lab_outputs" as gedi_site_A_comparison.png
-
-```
+## Comparing GEDI and NEON resolutions 
 
 ```{r}
 
