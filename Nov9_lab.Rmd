@@ -29,25 +29,18 @@ Install Packages
 #   "ggpubr",
 #   "patchwork"))
 
-```
-
-Load Library
-```{r}
-
-library(tidyverse)
+# load libraries 
+library("tidyverse")
 library(sf)
 library(terra)
 library(neonUtilities)
-library(dplyr)
-library(ggplot2)
-library(lubridate)
 library(arrow)
 library(remotes)
 library(exactextractr)
 library(maps)
 library(mapview)
 library(ggpubr)
-library(patchwork)
+
 
 ```
 
@@ -106,7 +99,7 @@ mapview(harv, col.regions = "grey",
   mapview(harv_p1, col.regions = "red") # red is the P1 boundary we use 
 ```
 
-## Search for GEDI footprints in AOP flight boundary of interest
+## SKIP FOR LAB - Search for GEDI footprints in AOP flight boundary of interest
 
 ```{r}
 # # search for gedi footprint over AOP boundary 
@@ -229,34 +222,34 @@ mapview(harv_p1, col.regions = "red", alpha.regions = 0.1,
 Data is too large to be downloaded during class (also need a free NEON account). Look [here](https://data.neonscience.org/data-products/DP3.30015.001) to learn more about downloading NEON ecosystem structure data.
 
 ```{r}
-chm_dir <- "Data/Neon_data/NEON.D01.HARV.DP3.30015.001.2022-08.basic.20261101T221639Z.RELEASE-2026"      # Set wd to where filds are
-
-tifs <- list.files(chm_dir, pattern = "CHM\\.tif$", recursive = TRUE, full.names = TRUE) # List files
-tif_year <- sub(".*DP3\\.30015\\.001\\.(\\d{4})-\\d{2}.*", "\\1", tifs)
-table(tif_year)
-
-tifs_2022 <- tifs[tif_year == "2022"]   # keep only 2022 tiles                           # Filter by year
+# chm_dir <- "Data/Neon_data/NEON.D01.HARV.DP3.30015.001.2022-08.basic.20261101T221639Z.RELEASE-2026"      # Set wd to where filds are
+# 
+# tifs <- list.files(chm_dir, pattern = "CHM\\.tif$", recursive = TRUE, full.names = TRUE) # List files
+# tif_year <- sub(".*DP3\\.30015\\.001\\.(\\d{4})-\\d{2}.*", "\\1", tifs)
+# table(tif_year)
+# 
+# tifs_2022 <- tifs[tif_year == "2022"]   # keep only 2022 tiles                           # Filter by year
 
 ```
 
 ## SKIP FOR LAB - Match NEON with GEDI data by location
 
 ```{r}
-# read in GEDI data and keep 2019 shots to match the NEON flight year
-harv_gedi <- st_read("lab_data/lab_gedi_qc.gpkg")
-
-# stitch the 2022 tiles into one virtual raster
-chm_2022 <- vrt(tifs_2022)
-#
-crs(chm_2022)                          # crs "ESPG 32618"
-crs(harv_p1)                           # crs "EPSG 4326"
-
-# Not the same coordinate system
-
-# transform GEDI data to the right format to be matched with NEON
-gedi_fp <- harv_gedi |>
-  st_transform(crs(chm_2022)) |> # transform to same coordinate system as NEON
-  st_buffer(12.5)                # 25 m circle around each GEDI point
+# # read in GEDI data and keep 2019 shots to match the NEON flight year
+# harv_gedi <- st_read("lab_data/lab_gedi_qc.gpkg")
+# 
+# # stitch the 2022 tiles into one virtual raster
+# chm_2022 <- vrt(tifs_2022)
+# #
+# crs(chm_2022)                          # crs "ESPG 32618"
+# crs(harv_p1)                           # crs "EPSG 4326"
+# 
+# # Not the same coordinate system
+# 
+# # transform GEDI data to the right format to be matched with NEON
+# gedi_fp <- harv_gedi |>
+#   st_transform(crs(chm_2022)) |> # transform to same coordinate system as NEON
+#   st_buffer(12.5)                # 25 m circle around each GEDI point
 
 # # NEON 98th percentile height inside each footprint (RH98 proxy)
 # chm_results <- data.frame(
@@ -295,10 +288,7 @@ gedi_fp <- harv_gedi |>
 
 ```
 
-
 ## RESTART HERE - join files by shot number
-
-***neon_chm_at_gedi_2022.csv has 2019, 2022, 2024*** added filter in code chunk 
 
 ```{r}
 harv_gedi   <- st_read("lab_data/lab_gedi_qc.gpkg")
@@ -309,14 +299,97 @@ gedi_neon <- harv_gedi |>
   mutate(shot_number = as.character(shot_number)) |>
   inner_join(chm_results, by = "shot_number") |> 
   rename(GEDI_rh98 = rh98, NEON_rh98 = chm_p98) |>
-  relocate(shot_number, GEDI_rh98, NEON_rh98)
+  relocate(shot_number, GEDI_rh98, NEON_rh98) 
 
 nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 
 # st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final dataset
 ```
 
-remove
+# Plots
+## histograms of GEDI and NEON rh98 values 
+```{r}
+gedi_neon |>
+  st_drop_geometry() |>
+  pivot_longer(c(GEDI_rh98, NEON_rh98), names_to = "source", values_to = "height") |>
+  ggplot(aes(x = height, fill = source)) +
+  geom_histogram(binwidth = 1, alpha = 0.5, position = "identity") +
+  scale_fill_manual(values = c(GEDI_rh98 = "purple", NEON_rh98 = "darkgreen"),
+                    labels = c("GEDI RH98", "NEON 98th percentile")) +
+  labs(x = "Canopy height (m)", y = "Number of footprints", fill = NULL,
+       title = "Canopy height distribution, HARV 2022") +
+  theme_minimal()
+```
+
+## plot one footprint
+```{r}
+px <- read.csv("lab_data/one_footprint_pixels.csv",
+               colClasses = c(shot_number = "character"))
+fp <- gedi_neon[gedi_neon$shot_number == px$shot_number[1], ]
+nrow(fp)   # should be 1
+
+ggplot(px, aes(x = value)) +
+  geom_histogram(binwidth = 1, fill = "grey70") +
+  geom_vline(xintercept = fp$NEON_rh98, color = "darkgreen", linewidth = 1) +
+  geom_vline(xintercept = fp$GEDI_rh98, color = "purple", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = mean(px$value, na.rm = TRUE), color = "black", linetype = "dotted") +
+  labs(x = "NEON pixel height (m)", y = "Number of 1 m pixels",
+       title = "Heights inside one GEDI footprint",
+       subtitle = "green = NEON 98th pct, purple = GEDI RH98, dotted = NEON mean") +
+  theme_minimal()
+```
+
+## 1:1 line 
+```{r}
+stats <- gedi_neon |>
+  st_drop_geometry() |>
+  summarise(
+    n    = n(),
+    r2   = cor(GEDI_rh98, NEON_rh98, use = "complete.obs")^2,
+    bias = mean(GEDI_rh98 - NEON_rh98, na.rm = TRUE),
+    rmse = sqrt(mean((GEDI_rh98 - NEON_rh98)^2, na.rm = TRUE))
+  )
+
+lab <- sprintf("n = %d\nR² = %.2f\nBias = %.1f m\nRMSE = %.1f m",
+               stats$n, stats$r2, stats$bias, stats$rmse)
+
+ggplot(gedi_neon, aes(x = NEON_rh98, y = GEDI_rh98)) +
+  geom_point(alpha = 0.3, size = 1) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  annotate("text", x = 2, y = Inf, label = lab, hjust = 0, vjust = 1.2) +
+  coord_equal() +
+  labs(x = "NEON 98th percentile (m)", y = "GEDI RH98 (m)",
+       title = "GEDI vs NEON canopy height, HARV 2022") +
+  theme_minimal()
+```
+
+## Distribution of differences 
+```{r}
+gedi_neon <- gedi_neon |> mutate(diff = GEDI_rh98 - NEON_rh98)
+
+ggplot(gedi_neon, aes(x = diff)) +
+  geom_histogram(binwidth = 1, fill = "grey60") +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "GEDI − NEON (m)", y = "Number of footprints") +
+  theme_minimal()
+```
+
+## Difference map
+
+```{r}
+lim <- ceiling(max(abs(gedi_neon$diff), na.rm = TRUE) / 5) * 5   # round up to nearest 5
+
+mapview(gedi_neon, zcol = "diff",
+        col.regions = colorRampPalette(c("blue", "white", "red")),
+        at = seq(-lim, lim, by = 5),
+        cex = 3, lwd = 0,
+        layer.name = "GEDI − NEON (m)",
+        map.types = c("Esri.WorldImagery", "OpenStreetMap"))
+```
+
+
+Re-run block below with final data, then add it to section of do not run
+
 ```{r}
 # Getting chm and gedi resolution comparison
 # 
@@ -407,9 +480,6 @@ remove
 
 # Part C - Plots and Analysis
 
-<<<<<<< HEAD
-  
-=======
 First view the selected GEDI shots within the NEON AOP
 
 Then Plot GEDI vs NEON height (98) metrics against eachother, examine rmse and bias 
@@ -526,24 +596,3 @@ p_map <- ggplot() +
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
->>>>>>> a502b8c4f25c8bc4f6b67cb526189cfdcc69e51d
