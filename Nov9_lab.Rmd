@@ -40,6 +40,7 @@ library(exactextractr)
 library(maps)
 library(mapview)
 library(ggpubr)
+library(patchwork)
 
 
 ```
@@ -306,7 +307,7 @@ nrow(gedi_neon)   # footprints with both a GEDI and a NEON height
 # st_write(gedi_neon, "lab_data/gedi_neon_2022.gpkg", delete_dsn = TRUE) # final dataset
 ```
 
-# Plots
+# Part C: Plots and Analysis
 ## histograms of GEDI and NEON rh98 values 
 ```{r}
 gedi_neon |>
